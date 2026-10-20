@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CUADRATURA - TERCOP vs geNRRHH</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'Segoe UI',sans-serif;background:#0f0f1a;color:#e0e0e0;padding:20px}
+h1{font-size:20px;margin-bottom:4px;color:#e94560}
+.sub{font-size:12px;color:#666;margin-bottom:16px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;align-items:flex-end}
+.controls .field{display:flex;flex-direction:column;gap:4px}
+.controls label{font-size:12px;color:#8892b0}
+.controls input,.controls select{padding:7px 10px;border:1px solid #2a2a4a;border-radius:6px;background:#1a1a2e;color:#e0e0e0;font-size:13px;min-width:160px}
+.controls button{padding:7px 18px;border:none;border-radius:6px;background:#e94560;color:#fff;cursor:pointer;font-size:13px}
+.controls button:hover{background:#d63851}
+.controls button.secondary{background:#1e3a8a}
+.controls button.secondary:hover{background:#1d4ed8}
+.controls .btn-upload{background:#0e7490}
+.controls .btn-upload:hover{background:#0891b2}
+#plinfo{margin-bottom:12px;font-size:13px;color:#7b8cde}
+.cards{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.card{background:#1a1a2e;border:1px solid #2a2a4a;border-radius:8px;padding:12px 16px;min-width:130px}
+.card .n{font-size:22px;font-weight:700}
+.card .t{font-size:11px;color:#8892b0;margin-top:2px}
+.card.green .n{color:#4ade80}
+.card.red .n{color:#f87171}
+.card.yellow .n{color:#facc15}
+.card.blue .n{color:#60a5fa}
+.card.purple .n{color:#a78bfa}
+.tabs{display:flex;gap:6px;margin-bottom:10px}
+.tabs button{padding:6px 14px;border:1px solid #2a2a4a;border-radius:6px;background:#1a1a2e;color:#8892b0;cursor:pointer;font-size:12px}
+.tabs button.active{background:#e94560;color:#fff;border-color:#e94560}
+.wrapper{max-height:60vh;overflow-y:auto;border:1px solid #2a2a4a;border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{position:sticky;top:0;background:#1a1a2e;padding:7px 6px;text-align:left;font-weight:600;color:#7b8cde;border-bottom:2px solid #2a2a4a;white-space:nowrap}
+td{padding:6px;border-bottom:1px solid #16162a;white-space:nowrap}
+tr:hover{background:#1a1a2e}
+td.num,th.num{text-align:right}
+.diff{color:#f87171;font-weight:700}
+.ok{color:#4ade80;font-weight:700}
+#msg{margin:10px 0;font-size:13px}
+#msg.error{color:#f87171}
+#msg.ok{color:#4ade80}
+.hidden{display:none}
+.tag{display:inline-block;padding:1px 8px;border-radius:4px;font-size:11px;font-weight:600}
+.tag-diff{background:#3b0d0d;color:#f87171}
+.tag-ok{background:#0d3b1a;color:#4ade80}
+.tag-so{background:#3b3b0d;color:#facc15}
+.tag-sb{background:#0d1b3b;color:#60a5fa}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+
+<h1>CUADRATURA - TERCOP vs geNRRHH</h1>
+<p class="sub">Compara el archivo TERCOP contra lqlegcon / lqhislegcon por clave legajo + concepto</p>
+
+<div class="controls">
+  <div class="field">
+    <label>N° de PL (Proceso de liquidación)</label>
+    <input type="number" id="pl" placeholder="ej: 25029">
+  </div>
+  <div class="field">
+    <label>Archivo TERCOP (carpeta LIQUIDACION TERCOP)</label>
+    <select id="file"><option value="">-- Seleccionar archivo --</option></select>
+  </div>
+  <button class="secondary" onclick="refrescarArchivos()">Actualizar lista</button>
+  <button class="btn-upload" onclick="document.getElementById('fileinput').click()">Subir archivo</button>
+  <input type="file" id="fileinput" accept=".csv,.xlsx,.xls" onchange="subirArchivo(this)">
+  <button onclick="comparar()">Comparar</button>
+  <button id="btnExport" class="hidden" onclick="exportar()">Exportar a Excel</button>
+</div>
+
+<div id="plinfo"></div>
+<div id="msg"></div>
+
+<div class="cards hidden" id="cards"></div>
+
+<div class="tabs hidden" id="tabs">
+  <button data-tab="dif" onclick="cambiarTab('dif')"></button>
+  <button data-tab="so" onclick="cambiarTab('so')"></button>
+  <button data-tab="sb" onclick="cambiarTab('sb')"></button>
+</div>
+
+<div class="wrapper hidden" id="wrapper">
+  <table id="tabla">
+    <thead id="thead"></thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<script>
+let resultado = null;
+let tabActiva = 'dif';
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  const ct = r.headers.get('content-type') || '';
+  if (ct.indexOf('application/json') >= 0) return r.json();
+  const txt = await r.text();
+  let err = 'Error HTTP ' + r.status;
+  try { err = (JSON.parse(txt).error) || err; } catch (_) {}
+  throw new Error(err);
+}
+
+async function refrescarArchivos() {
+  const sel = document.getElementById('file');
+  const prev = sel.value;
+  const files = await api('/api/files');
+  sel.innerHTML = '<option value="">-- Seleccionar archivo --</option>';
+  for (const f of files) {
+    const o = document.createElement('option');
+    o.value = f.name;
+    o.textContent = f.name + '  (' + (f.size/1024/1024).toFixed(2) + ' MB)';
+    sel.appendChild(o);
+  }
+  if (prev) sel.value = prev;
+}
+
+async function subirArchivo(input) {
+  if (!input.files.length) return;
+  const fd = new FormData();
+  fd.append('file', input.files[0]);
+  const msg = document.getElementById('msg');
+  msg.className = '';
+  msg.textContent = 'Subiendo...';
+  try {
+    const r = await api('/api/upload', { method: 'POST', body: fd });
+    if (r.ok) {
+      msg.className = 'ok';
+      msg.textContent = 'Archivo "' + r.name + '" subido a la carpeta LIQUIDACION TERCOP.';
+      refrescarArchivos();
+    } else {
+      msg.className = 'error';
+      msg.textContent = 'Error: ' + (r.error || 'desconocido');
+    }
+  } catch (e) {
+    msg.className = 'error';
+    msg.textContent = 'Error al subir: ' + e.message;
+  }
+  input.value = '';
+}
+
+function msgErr(t) {
+  const m = document.getElementById('msg');
+  m.className = 'error';
+  m.textContent = t;
+}
+
+async function comparar() {
+  const pl = document.getElementById('pl').value.trim();
+  const file = document.getElementById('file').value;
+  if (!pl) return msgErr('Indique el numero de PL.');
+  if (!file) return msgErr('Seleccione el archivo TERCOP.');
+
+  const m = document.getElementById('msg');
+  m.className = '';
+  m.textContent = 'Comparando PL ' + pl + ' ...';
+  document.getElementById('wrapper').classList.add('hidden');
+  document.getElementById('cards').classList.add('hidden');
+  document.getElementById('tabs').classList.add('hidden');
+  document.getElementById('btnExport').classList.add('hidden');
+
+  try {
+    const r = await api('/api/compare', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pl, file })
+    });
+    if (r.error) return msgErr(r.error);
+    resultado = r;
+    m.className = 'ok';
+    m.textContent = 'Comparacion finalizada. Se uso la tabla: ' + r.tabla.toUpperCase();
+    document.getElementById('plinfo').textContent =
+      'PL ' + r.pl + ' - ' + r.pl_desc + (r.pl_periodo ? ' (periodo ' + r.pl_periodo + ')' : '') + ' | Archivo: ' + r.archivo + ' | Tabla: ' + r.tabla.toUpperCase();
+    mostrarCards(r.resumen);
+    mostrarTabs(r.resumen);
+    renderTab('dif');
+    document.getElementById('btnExport').classList.remove('hidden');
+  } catch (e) {
+    msgErr('Error al comparar: ' + e.message);
+  }
+}
+
+function mostrarCards(s) {
+  const c = document.getElementById('cards');
+  c.classList.remove('hidden');
+  c.innerHTML = [
+    card(s.ok, 'OK', 'green'),
+    card(s.con_diferencia, 'Con diferencia', 'red'),
+    card(s.solo_tercop, 'Solo en TERCOP', 'yellow'),
+    card(s.solo_bd, 'Solo en BD', 'blue'),
+    card(s.internos_bd || 0, 'Internos BD excluidos', 'blue'),
+    card(s.sin_mapeo || 0, 'Sin mapeo', 'yellow'),
+    card(s.filas_tercop, 'Filas TERCOP', 'purple'),
+    card(s.filas_bd, 'Filas BD', 'purple')
+  ].join('');
+}
+function card(n, t, color) {
+  return '<div class="card ' + color + '"><div class="n">' + n + '</div><div class="t">' + t + '</div></div>';
+}
+
+function mostrarTabs(s) {
+  const t = document.getElementById('tabs');
+  t.classList.remove('hidden');
+  const labels = { dif: 'Diferencias (' + s.con_diferencia + ')', so: 'Solo TERCOP (' + s.solo_tercop + ')', sb: 'Solo BD (' + s.solo_bd + ')' };
+  t.querySelectorAll('button').forEach(b => {
+    b.textContent = labels[b.dataset.tab];
+  });
+}
+
+function cambiarTab(t) {
+  tabActiva = t;
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
+  renderTab(t);
+}
+
+const COLS_TERCOP = [
+  { k: 'documento', t: 'Documento' },
+  { k: 'legajo', t: 'Legajo' },
+  { k: 'apellido', t: 'Apellido' },
+  { k: 'empresa', t: 'Empresa' },
+  { k: 'estado', t: 'Estado' },
+  { k: 'dependencia', t: 'Dependencia' },
+  { k: 'cargo', t: 'Cargo' },
+  { k: 'concepto', t: 'Concepto' },
+  { k: 'descripcion_concepto', t: 'Descripcion' },
+  { k: 'unidades', t: 'Unidades' },
+  { k: 'importe', t: 'Importe TERCOP' },
+  { k: 'cantidad_horas', t: 'Cant. horas' }
+];
+
+function renderTab(tab) {
+  const thead = document.getElementById('thead');
+  const tbody = document.getElementById('tbody');
+  document.getElementById('wrapper').classList.remove('hidden');
+
+  let rows = [];
+  let cols = [];
+  if (tab === 'dif') {
+    cols = [...COLS_TERCOP.map(c => ({ ...c, num: c.k === 'unidades' || c.k === 'importe' || c.k === 'cantidad_horas' })),
+      { k: 'db_importe', t: 'Importe BD', num: true },
+      { k: 'diferencia', t: 'Diferencia', num: true },
+      { k: 'rutina', t: 'Rutina' },
+      { k: 'consulta', t: 'Consulta' }];
+    rows = resultado.diferencias;
+  } else if (tab === 'so') {
+    cols = [...COLS_TERCOP.map(c => ({ ...c, num: c.k === 'unidades' || c.k === 'importe' || c.k === 'cantidad_horas' })),
+      { k: 'db_importe', t: 'Importe BD', num: true }];
+    rows = resultado.soloTercop;
+  } else {
+    cols = [
+      { k: 'legajo', t: 'Legajo' },
+      { k: 'concepto', t: 'Concepto' },
+      { k: 'importe', t: 'Importe BD', num: true },
+      { k: 'items', t: 'Rutinas', raw: true },
+      { k: 'consultaItems', t: 'Consultas', raw: true }];
+    rows = resultado.soloBD;
+  }
+
+  thead.innerHTML = '<tr>' + cols.map(c => '<th class="' + (c.num ? 'num' : '') + '">' + c.t + '</th>').join('') + '</tr>';
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="' + cols.length + '" style="color:#666">Sin registros en esta seccion.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const cells = cols.map(c => {
+      let v = r[c.k];
+      if (c.raw) {
+        if (c.k === 'items') v = r.items.map(i => i.rutina).join('+');
+        if (c.k === 'consultaItems') v = r.items.map(i => i.consulta).join('+');
+        return '<td>' + esc(v) + '</td>';
+      }
+      if (typeof v === 'number') v = v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      let cls = c.num ? 'num' : '';
+      if (c.k === 'diferencia' && tab === 'dif') cls += ' diff';
+      return '<td class="' + cls + '">' + esc(v === null || v === undefined ? '' : v) + '</td>';
+    }).join('');
+    return '<tr>' + cells + '</tr>';
+  }).join('');
+}
+
+function esc(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+async function exportar() {
+  if (!resultado) return;
+  const r = await fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pl: resultado.pl, file: resultado.archivo })
+  });
+  if (!r.ok) {
+    let e = 'Error al exportar';
+    try { e = (await r.json()).error || e; } catch (_) {}
+    return msgErr(e);
+  }
+  const blob = await r.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'cuadratura_PL' + resultado.pl + '.xlsx';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+cambiarTab('dif');
+refrescarArchivos();
+</script>
+</body>
+</html>
